@@ -35,3 +35,7 @@ build/
 *.parquet
 output/
 data/
+
+# dbt artifacts
+*.duckdb
+.user.yml
