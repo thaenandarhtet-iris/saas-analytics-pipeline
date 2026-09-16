@@ -1,0 +1,22 @@
+name: saas_analytics
+version: 1.0.0
+config-version: 2
+
+profile: saas_analytics
+
+models:
+  saas_analytics:
+    materialized: view
+    staging:
+      +materialized: view
+    intermediate:
+      +materialized: table
+    marts:
+      +materialized: table
+
+seeds:
+  +quote_columns: false
+
+vars:
+  start_date: '2023-09-16'
+  end_date: '2026-09-16'

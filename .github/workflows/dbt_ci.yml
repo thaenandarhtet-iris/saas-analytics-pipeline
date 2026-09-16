@@ -1,0 +1,29 @@
+# Future: dbt test on every PR
+# Placeholder for GitHub Actions CI
+
+name: dbt CI
+
+on:
+  pull_request:
+    paths:
+      - 'dbt_project/**'
+      - 'requirements.txt'
+
+jobs:
+  dbt-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      
+      - name: dbt run
+        run: cd dbt_project && dbt run --target ci
+      
+      - name: dbt test
+        run: cd dbt_project && dbt test --target ci

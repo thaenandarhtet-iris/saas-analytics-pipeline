@@ -1,0 +1,7 @@
+saas_analytics:
+  outputs:
+    dev:
+      type: duckdb
+      path: '[dbt_project_dir]/dbt.duckdb'
+      threads: 4
+  target: dev
