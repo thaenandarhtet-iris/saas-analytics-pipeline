@@ -1,26 +1,14 @@
--- Intermediate: SCD Type 2 logic applied
--- Tracks full subscription history with validity dates
--- Key insight: one row per (customer, plan, period)
-
-with source as (
-    select * from {{ source('raw', 'subscriptions') }}
-),
-
-with_row_nums as (
-    select 
-        *,
-        row_number() over (partition by subscription_id order by valid_from) as subscription_version
-    from source
-)
-
-select 
-    subscription_id,
-    customer_id,
-    plan_id,
-    status,
-    valid_from,
-    valid_to,
-    is_current,
-    subscription_version,
-    current_timestamp as dbt_run_at
-from with_row_nums
+-- SCD2: full subscription history with plan details joined in
+select
+    s.subscription_id,
+    s.customer_id,
+    s.plan_id,
+    p.plan_name,
+    p.monthly_price,
+    s.status,
+    s.valid_from,
+    s.valid_to,
+    s.is_current,
+    row_number() over (partition by s.customer_id order by s.valid_from) as subscription_sequence
+from {{ ref('stg_subscriptions') }} s
+left join {{ ref('stg_plans') }} p on s.plan_id = p.plan_id

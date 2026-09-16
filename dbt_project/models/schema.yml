@@ -2,64 +2,55 @@ version: 2
 
 sources:
   - name: raw
-    description: Raw data from Python generation script
+    description: Raw data loaded from JSON
+    schema: main
     tables:
-      - name: customers
-        description: Customer master data
+      - name: raw_customers
         columns:
           - name: customer_id
-            description: Unique customer identifier
             tests:
               - unique
               - not_null
-      
-      - name: plans
-        description: Subscription plan definitions
-        columns:
-          - name: plan_id
-            description: Unique plan identifier
-            tests:
-              - unique
-              - not_null
-      
-      - name: subscriptions
-        description: Subscription records (SCD2 ready)
+      - name: raw_plans
+      - name: raw_subscriptions
         columns:
           - name: subscription_id
-            description: Unique subscription identifier
             tests:
               - unique
               - not_null
-      
-      - name: subscription_events
-        description: Subscription lifecycle events
-        columns:
-          - name: event_id
-            description: Unique event identifier
-            tests:
-              - unique
-              - not_null
-      
-      - name: invoices
-        description: Invoice records
-        columns:
-          - name: invoice_id
-            description: Unique invoice identifier
-            tests:
-              - unique
-              - not_null
+      - name: raw_subscription_events
+      - name: raw_invoices
 
 models:
   - name: stg_customers
-    description: Staged customer data, cleaned
+    description: Staged customers
     columns:
       - name: customer_id
         tests:
           - unique
           - not_null
-  
+
+  - name: stg_plans
+    description: Staged plans
+    columns:
+      - name: plan_id
+        tests:
+          - unique
+          - not_null
+
+  - name: stg_subscriptions
+    description: Staged subscriptions (SCD2)
+    columns:
+      - name: subscription_id
+        tests:
+          - unique
+          - not_null
+
+  - name: stg_invoices
+    description: Staged invoices
+
   - name: dim_customers
-    description: Customer dimension with cohort
+    description: Customer dimension with cohort and churn status
     columns:
       - name: customer_id
         tests:
@@ -68,3 +59,20 @@ models:
           - relationships:
               to: ref('stg_customers')
               field: customer_id
+
+  - name: fct_invoices
+    description: Invoice facts joined with subscription/plan context
+    columns:
+      - name: invoice_id
+        tests:
+          - unique
+          - not_null
+
+  - name: mart_mrr
+    description: Monthly recurring revenue by plan and region
+
+  - name: mart_churn
+    description: Monthly churn counts and average days-to-churn by plan
+
+  - name: mart_cohort_retention
+    description: Cohort retention counts by signup month and active month
