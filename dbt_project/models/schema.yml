@@ -2,7 +2,7 @@ version: 2
 
 sources:
   - name: raw
-    description: Raw data loaded from JSON
+    description: Raw data loaded from the generator's JSON files by ingestion/load_to_duckdb.py
     schema: main
     tables:
       - name: raw_customers
@@ -23,7 +23,7 @@ sources:
 
 models:
   - name: stg_customers
-    description: Staged customers
+    description: One row per customer, lightly typed from the raw table.
     columns:
       - name: customer_id
         tests:
@@ -31,7 +31,7 @@ models:
           - not_null
 
   - name: stg_plans
-    description: Staged plans
+    description: The three plans and their monthly and annual prices.
     columns:
       - name: plan_id
         tests:
@@ -39,18 +39,84 @@ models:
           - not_null
 
   - name: stg_subscriptions
-    description: Staged subscriptions (SCD2)
+    description: >
+      SCD2 subscription versions. Each row is one plan period for one customer;
+      status is 'canceled' only on a customer's final version when they churned.
     columns:
       - name: subscription_id
         tests:
           - unique
           - not_null
+      - name: customer_id
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_customers')
+              field: customer_id
+      - name: plan_id
+        tests:
+          - relationships:
+              to: ref('stg_plans')
+              field: plan_id
+      - name: status
+        tests:
+          - accepted_values:
+              values: ['active', 'canceled']
+
+  - name: stg_subscription_events
+    description: Signup, upgrade, downgrade and cancel events, keyed to the subscription version they created or ended.
+    columns:
+      - name: event_id
+        tests:
+          - unique
+          - not_null
+      - name: subscription_id
+        tests:
+          - relationships:
+              to: ref('stg_subscriptions')
+              field: subscription_id
+      - name: event_type
+        tests:
+          - accepted_values:
+              values: ['signup', 'upgrade', 'downgrade', 'cancel']
 
   - name: stg_invoices
-    description: Staged invoices
+    description: Monthly invoices per subscription version.
+    columns:
+      - name: invoice_id
+        tests:
+          - unique
+          - not_null
+      - name: subscription_id
+        tests:
+          - relationships:
+              to: ref('stg_subscriptions')
+              field: subscription_id
+      - name: status
+        tests:
+          - accepted_values:
+              values: ['paid', 'failed', 'refunded']
+
+  - name: int_subscriptions_history
+    description: Subscription versions joined to plan name and price. The base for every MRR calculation.
+    columns:
+      - name: subscription_id
+        tests:
+          - unique
+          - not_null
+      - name: customer_id
+        tests:
+          - relationships:
+              to: ref('stg_customers')
+              field: customer_id
+      - name: plan_id
+        tests:
+          - relationships:
+              to: ref('stg_plans')
+              field: plan_id
 
   - name: dim_customers
-    description: Customer dimension with cohort and churn status
+    description: Customer dimension with signup cohort month and churn status.
     columns:
       - name: customer_id
         tests:
@@ -59,20 +125,76 @@ models:
           - relationships:
               to: ref('stg_customers')
               field: customer_id
+      - name: customer_status
+        tests:
+          - accepted_values:
+              values: ['active', 'churned']
 
   - name: fct_invoices
-    description: Invoice facts joined with subscription/plan context
+    description: Invoice facts with customer and plan context.
     columns:
       - name: invoice_id
         tests:
           - unique
           - not_null
+      - name: subscription_id
+        tests:
+          - relationships:
+              to: ref('int_subscriptions_history')
+              field: subscription_id
+      - name: customer_id
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_customers')
+              field: customer_id
 
   - name: mart_mrr
-    description: Monthly recurring revenue by plan and region
+    description: MRR at the end of each month by plan and region. A snapshot, so never sum it across months.
+    columns:
+      - name: month
+        tests:
+          - not_null
+      - name: plan_name
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['Starter', 'Pro', 'Enterprise']
+      - name: total_mrr
+        tests:
+          - not_null
+
+  - name: mart_mrr_movements
+    description: Monthly MRR bridge. new + expansion + contraction + churned equals net new MRR.
+    columns:
+      - name: month
+        tests:
+          - unique
+          - not_null
+      - name: ending_mrr
+        tests:
+          - not_null
 
   - name: mart_churn
-    description: Monthly churn counts and average days-to-churn by plan
+    description: Cancellations by month and plan, with average days from signup to cancel.
+    columns:
+      - name: churn_month
+        tests:
+          - not_null
+      - name: plan_name
+        tests:
+          - accepted_values:
+              values: ['Starter', 'Pro', 'Enterprise']
 
   - name: mart_cohort_retention
-    description: Cohort retention counts by signup month and active month
+    description: For each signup cohort and each month after signup, how many customers were still active.
+    columns:
+      - name: cohort_month
+        tests:
+          - not_null
+      - name: active_month
+        tests:
+          - not_null
+      - name: retention_pct
+        tests:
+          - not_null

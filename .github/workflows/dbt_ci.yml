@@ -1,29 +1,23 @@
-# Future: dbt test on every PR
-# Placeholder for GitHub Actions CI
-
 name: dbt CI
 
 on:
   pull_request:
-    paths:
-      - 'dbt_project/**'
-      - 'requirements.txt'
+  push:
+    branches: [main]
 
 jobs:
-  dbt-test:
+  build-and-test:
     runs-on: ubuntu-latest
-    
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-      
+          python-version: "3.11"
+          cache: pip
+
       - name: Install dependencies
         run: pip install -r requirements.txt
-      
-      - name: dbt run
-        run: cd dbt_project && dbt run --target ci
-      
-      - name: dbt test
-        run: cd dbt_project && dbt test --target ci
+
+      - name: Generate data, load DuckDB, run dbt models and tests
+        run: python orchestration/saas_pipeline.py
