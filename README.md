@@ -1,5 +1,8 @@
 # SaaS Subscription Analytics Pipeline
 
+[![dbt CI](https://github.com/thaenandarhtet-iris/saas-analytics-pipeline/actions/workflows/dbt_ci.yml/badge.svg)](https://github.com/thaenandarhtet-iris/saas-analytics-pipeline/actions/workflows/dbt_ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 An end-to-end analytics project. I generated three years of subscription data for a fictional B2B SaaS company, modeled it with dbt on DuckDB, and reported MRR, churn and cohort retention in a Tableau Public dashboard. One command runs the whole thing.
 
 **Live dashboard:** [Tableau Public](https://public.tableau.com/app/profile/iris.htet/viz/saas-analytics-dashboard/Dashboard)
@@ -15,7 +18,7 @@ The data is synthetic, so every number below describes what my generator produce
 | Source data | 100 customers, 137 subscription versions, 172 events, 1,559 invoices (1,971 raw rows), Sep 2023 to Sep 2026 |
 | dbt project | 12 models (5 staging, 1 intermediate, 6 marts) and 48 tests, all passing |
 | Run it | `python orchestration/saas_pipeline.py` (generate, load, `dbt run`, `dbt test`, export) |
-| CI | GitHub Actions runs the same script on every pull request |
+| CI | GitHub Actions runs the same script on every pull request and every push to `main` |
 | Dashboard | 4 views: MRR trend, MRR movement, monthly churn, cohort retention heatmap |
 
 ## What the data says (as of Sep 2026)
@@ -97,7 +100,7 @@ How the trickier ones work:
 
 - **MRR is a month-end snapshot.** A month spine (Sep 2023 to Sep 2026) is joined to the SCD2 versions, and each customer counts at the price of whichever version is live on the last day of the month.
 - **Movements compare each customer's MRR to the month before.** From nothing to something is new. Up is expansion. Down but still paying is contraction. To zero is churned.
-- **Cohort retention uses the same live-version rule.** It has 35 monthly cohorts and 665 cohort-month cells, and the heatmap is limited to the first 12 months.
+- **Cohort retention counts a customer as active in a month if any of their versions was live at some point in it.** It builds the full cohort-by-age grid (35 monthly cohorts, 691 cohort-month cells) and fills gaps with 0, so a cohort that loses everyone shows 0% instead of a blank. The dashboard heatmap shows the first 12 months.
 
 ## Testing
 
@@ -123,7 +126,8 @@ That test is the reason I trust the MRR chart, since the bridge and the snapshot
 | MRR climbed then fell to zero, and the retention heatmap had a full month 0 and almost nothing after | My marts counted a customer only in the month a subscription row started. The generator also had future-dated events, a "downgrade" that could keep the same plan, and no seasonality | Rebuilt the marts on a month spine with month-end snapshots. Rewrote the generator as a monthly simulation. Added the reconciliation test |
 | Tableau lost its data connections | Tableau tried to relate the unrelated CSVs, and the workbook then failed to connect | Rebuilt the workbook with each CSV as its own data source |
 | The MRR chart's axis ran to 40K when real MRR was $8.6K | Grouping by year made Tableau add up twelve monthly snapshots | Used the exact month. A snapshot is never summed across time |
-| CI workflow would have failed on its first run | It called a `--target ci` that does not exist, and it never generated any data | Made CI run the same script I run locally. I ran that script in a fresh Python 3.11 environment with no database (12 models, 48 tests, all passing) |
+| CI workflow would have failed on its first run | It called a `--target ci` that does not exist, and it never generated any data | Made CI run the same script I run locally. I ran that script in a fresh Python 3.11 environment with no database (12 models, 48 tests, all passing), and the first run on GitHub passed too |
+| The heatmap showed blank cells where a cohort had lost every customer, and its color scale stopped at 33% | The mart only wrote a row for a month when at least one customer was still active, so 0% never appeared. Found while reviewing the dashboard screenshot | Built the full cohort-by-age grid and filled missing cells with 0. That added 26 cells across three single-customer cohorts (Nov 2024, Feb 2025, Apr 2026) |
 
 ## Run it
 
@@ -171,9 +175,8 @@ saas-analytics-pipeline/
 └── requirements.txt
 ```
 
-## Known gaps and what I did not build
+## What I did not build
 
-- **Zero-retention cells are blank in the heatmap.** `mart_cohort_retention` only writes a row for a month when at least one customer from the cohort is still active. Two single-customer cohorts (Nov 2024 and Apr 2026) lost their only customer, so their later cells show as blank instead of 0%, and the lowest value on the color scale is 33% rather than 0%. The fix is to build the full cohort-by-age grid and fill missing cells with 0.
 - **S3, Snowflake and Airflow.** I do not have AWS or Snowflake accounts, so the warehouse is DuckDB and `orchestration/saas_pipeline.py` runs the steps in the order an Airflow DAG would. Moving to Snowflake means switching to the `dbt-snowflake` adapter, adding a target, and replacing the loader with an S3 stage plus `COPY INTO`. It is not a pure config change, because the month spine uses DuckDB's `generate_series` and I use `date_diff`, both of which need a Snowflake equivalent.
 - **Reactivations and paused subscriptions.** The generator does not produce them, so those event types and statuses are unused.
 - **Product usage data.** All churn here is billing-based.
