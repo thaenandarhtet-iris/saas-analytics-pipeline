@@ -16,9 +16,9 @@ An end-to-end analytics engineering project that models subscription revenue for
 | | |
 |---|---|
 | Source data | 100 customers, 137 subscription versions, 172 events and 1,559 invoices (1,971 raw rows), September 2023 to September 2026 |
-| dbt project | 12 models (5 staging, 1 intermediate, 6 marts) and 48 tests, all passing |
+| dbt project | dbt-core 1.11: 12 models (5 staging, 1 intermediate, 6 marts) and 48 tests, all passing |
 | Execution | `python orchestration/saas_pipeline.py` runs generation, load, `dbt run`, `dbt test` and export |
-| Continuous integration | GitHub Actions runs the same script on every pull request and every push to `main` |
+| Continuous integration | GitHub Actions runs the generator tests and the full pipeline on every pull request and every push to `main` |
 | Dashboard | Four views: MRR trend, MRR movement, monthly churn and cohort retention heatmap |
 
 ## Results (as of September 2026)
@@ -113,21 +113,9 @@ A custom test, `tests/assert_mrr_reconciles.sql`, fails if either of the followi
 
 Because the MRR bridge and the MRR snapshot are computed by separate models, this test provides an independent reconciliation of the two.
 
-## Engineering notes: issues and resolutions
+## Engineering notes
 
-| Issue | Root cause | Resolution |
-|---|---|---|
-| `pip install` failed while building `pyarrow` | No prebuilt wheel for Python 3.13, and the source build requires `pkg_resources` | Removed the dependency, which the project did not use |
-| `dbt debug` succeeded, then dbt crashed with `MessageToJson() got an unexpected keyword argument` | protobuf 5 is incompatible with dbt-core 1.7 | Pinned `protobuf>=4.25,<5` |
-| dbt could not open the database | The profile path was a placeholder, `[dbt_project_dir]/dbt.duckdb` | Replaced it with the relative path `dbt.duckdb` |
-| `Catalog "main" does not exist`, followed by `Table ... does not exist` | `database: main` was set on the source, but DuckDB names the catalog after the database file. The loader also created `raw_*` tables while the sources referenced unprefixed names | Removed the `database` override and renamed the sources to `raw_*` |
-| `dim_customers` failed its uniqueness test with 100 duplicates, then labeled all 100 customers as churned | Events are keyed by `subscription_id` rather than `customer_id`, so the churn lookup must go through subscriptions. The 100-of-100 result also passed the test suite | Joined through `stg_subscriptions` and rebuilt with `--full-refresh`, producing a plausible split. Category breakdowns are now reviewed in addition to test results |
-| The built database and dbt's user file were committed | Missing `.gitignore` entries | Added the entries and removed the files from tracking with `git rm --cached` |
-| MRR rose and then fell to zero, and the retention heatmap showed a full month 0 with almost nothing afterward | The marts counted a customer only in the month a subscription row began. The generator also produced future-dated events, a "downgrade" that could leave the plan unchanged, and no seasonality | Rebuilt the marts on a month spine with month-end snapshots, rewrote the generator as a monthly simulation, and added the reconciliation test |
-| Tableau lost its data connections | Tableau attempted to relate unrelated CSV files, after which the workbook failed to connect | Rebuilt the workbook with each CSV as a separate data source |
-| The MRR chart's axis extended to 40K although actual MRR was $8.6K | Grouping by year caused Tableau to sum twelve monthly snapshots | Switched to the exact month. A snapshot should never be summed across time |
-| The CI workflow would have failed on its first run | It referenced a nonexistent `--target ci` and did not generate any data | Changed CI to run the same script used locally. The script was verified in a fresh Python 3.11 environment with no existing database (12 models, 48 tests, all passing), and the first run on GitHub also passed |
-| The heatmap showed blank cells where a cohort had lost every customer, and its color scale ended at 33% | The mart wrote a row for a month only when at least one customer remained active, so 0% never appeared. Identified during review of the dashboard screenshot | Built the full cohort-by-age grid and filled missing cells with 0, adding 26 cells across three single-customer cohorts (Nov 2024, Feb 2025 and Apr 2026) |
+Twelve problems found while building the project, including a churn model that labelled every customer as churned and still passed its tests, and a dashboard that summed monthly MRR snapshots, are written up with root causes and fixes in [docs/ENGINEERING_NOTES.md](docs/ENGINEERING_NOTES.md).
 
 ## Running the project
 
@@ -140,7 +128,7 @@ pip install -r requirements.txt
 python orchestration/saas_pipeline.py
 ```
 
-The project was tested on Python 3.11 (in a clean environment) and Python 3.13. dbt 1.7 did not run on Python 3.14 in testing.
+The project uses dbt-core 1.11 and is tested on Python 3.11 in CI. `pytest` checks the data generator (reproducibility, row counts and SCD2 rules).
 
 To run the steps individually:
 
@@ -171,6 +159,8 @@ saas-analytics-pipeline/
 │   ├── export_csvs.py
 │   ├── screenshots/
 │   └── tableau_public_link.md
+├── tests/                      pytest checks on the data generator
+├── docs/ENGINEERING_NOTES.md   issues found and how they were fixed
 ├── .github/workflows/dbt_ci.yml
 └── requirements.txt
 ```

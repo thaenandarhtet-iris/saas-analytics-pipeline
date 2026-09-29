@@ -19,5 +19,8 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Test the data generator
+        run: pytest -v
+
       - name: Generate data, load DuckDB, run dbt models and tests
         run: python orchestration/saas_pipeline.py
