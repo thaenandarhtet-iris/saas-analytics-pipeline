@@ -16,7 +16,8 @@ An end-to-end analytics engineering project that models subscription revenue for
 | | |
 |---|---|
 | Source data | 100 customers, 137 subscription versions, 172 events and 1,559 invoices (1,971 raw rows), September 2023 to September 2026 |
-| dbt project | dbt-core 1.11: 12 models (5 staging, 1 intermediate, 6 marts) and 48 tests, all passing |
+| dbt project | dbt-core 1.11: 14 models (5 staging, 3 intermediate, 6 marts) and 57 data tests, all passing |
+| Generator tests | 11 pytest tests, including checks that the churn, plan-tier and seasonality patterns actually appear in the data |
 | Execution | `python orchestration/saas_pipeline.py` runs generation, load, `dbt run`, `dbt test` and export |
 | Continuous integration | GitHub Actions runs the generator tests and the full pipeline on every pull request and every push to `main` |
 | Dashboard | Four views: MRR trend, MRR movement, monthly churn and cohort retention heatmap |
@@ -47,11 +48,11 @@ MRR reconciles exactly over the full three-year period: **+$9,393 new, +$3,520 e
 flowchart LR
     A["generate_synthetic_data.py<br/>Python + Faker, seed 42"] -->|5 JSON files| B["load_to_duckdb.py<br/>raw_* tables"]
     B --> C["dbt staging<br/>5 views"]
-    C --> D["dbt intermediate<br/>int_subscriptions_history"]
+    C --> D["dbt intermediate<br/>subscription history,<br/>month spine, customer-months"]
     D --> E["dbt marts<br/>6 tables"]
     E --> F["export_csvs.py"]
     F --> G["Tableau Public<br/>4 views"]
-    T["48 dbt tests"] -.-> C
+    T["57 dbt tests"] -.-> C
     T -.-> D
     T -.-> E
     CI["GitHub Actions"] -.->|runs the pipeline on every PR| A
@@ -88,7 +89,9 @@ The 137 subscription rows consist of 100 initial versions and 37 plan changes. A
 | Layer | Model | Purpose |
 |---|---|---|
 | Staging | `stg_customers`, `stg_plans`, `stg_subscriptions`, `stg_subscription_events`, `stg_invoices` | Views mapped one-to-one to the raw tables |
-| Intermediate | `int_subscriptions_history` | SCD2 versions joined to plan name and price; the base for all MRR calculations |
+| Intermediate | `int_subscriptions_history` | SCD2 versions joined to plan name and price |
+| | `int_month_spine` | One row per calendar month in the analysis window |
+| | `int_customer_months` | One row per customer per month: the month-end plan and MRR, and whether the customer was active during the month. The single base for the MRR, MRR movement and retention marts |
 | Marts | `dim_customers` | Customer attributes, signup cohort month and active or churned status |
 | | `fct_invoices` | Invoices enriched with customer and plan context |
 | | `mart_mrr` | MRR at each month end, by plan and region |
@@ -98,20 +101,21 @@ The 137 subscription rows consist of 100 initial versions and 37 plan changes. A
 
 Key modeling logic:
 
-- **MRR is a month-end snapshot.** A month spine (September 2023 to September 2026) is joined to the SCD2 versions, and each customer is valued at the price of the version that is live on the last day of the month.
+- **All monthly metrics share one customer-by-month model.** `int_customer_months` crosses every customer with a month spine (September 2023 to September 2026) and records two facts per month: the plan and price of the version live on the last day of the month, and whether any version was live during the month. The rules for "billed" and "active" are defined once, and the three monthly marts are aggregations of this model.
+- **MRR is a month-end snapshot.** Each customer is valued at the price of the version that is live on the last day of the month.
 - **MRR movements compare each customer's MRR with the prior month.** A change from zero to a positive amount is new, an increase is expansion, a decrease with continued payment is contraction, and a change to zero is churn.
 - **Cohort retention treats a customer as active in a month if any of their versions was live at some point in that month.** The model builds the full cohort-by-age grid (35 monthly cohorts and 691 cohort-month cells) and fills gaps with 0, so a cohort that loses all of its customers reports 0% rather than a blank cell. The dashboard heatmap displays the first 12 months.
 
 ## Testing and data quality
 
-All 48 tests pass. Coverage includes uniqueness and not-null checks on every key, `relationships` checks between the staging layer, the intermediate model and the marts, `accepted_values` checks on status, event type and plan, and not-null checks on every mart.
+All 57 dbt data tests pass. Coverage includes uniqueness and not-null checks on every key, `relationships` checks between the staging layer, the intermediate models and the marts, `accepted_values` checks on status, event type and plan, and not-null checks on every mart.
 
-A custom test, `dbt_project/tests/assert_mrr_reconciles.sql`, fails if either of the following conditions is false for any month:
+Two custom tests guard the core logic:
 
-1. New, expansion, contraction and churned MRR sum to net new MRR.
-2. Ending MRR in `mart_mrr_movements` equals the total of `mart_mrr`.
+- `dbt_project/tests/assert_mrr_reconciles.sql` fails if, for any month, new, expansion, contraction and churned MRR do not sum to net new MRR, or if ending MRR in `mart_mrr_movements` does not equal the total of `mart_mrr`.
+- `dbt_project/tests/assert_customer_months_complete.sql` fails if `int_customer_months` has a duplicate or missing customer-month, or a customer billed at month end who is not marked active. It was confirmed to fail when the month-end rule is deliberately broken.
 
-Because the MRR bridge and the MRR snapshot are computed by separate models, this test provides an independent reconciliation of the two.
+The data generator has its own 11 pytest tests. Beyond reproducibility, row counts and SCD2 rules, three of them check on a 3,000-customer run that the configured patterns are present: churn more than twice as high in the first 90 days, higher churn on cheaper starting plans, and January and September signup spikes. Each was confirmed to fail when its pattern is switched off.
 
 ## Engineering notes
 
@@ -128,7 +132,7 @@ pip install -r requirements.txt
 python orchestration/saas_pipeline.py
 ```
 
-The project uses dbt-core 1.11 and is tested on Python 3.11 in CI. `pytest` checks the data generator (reproducibility, row counts and SCD2 rules).
+The project uses dbt-core 1.11 and is tested on Python 3.11 in CI. Run `pytest` to test the data generator.
 
 To run the steps individually:
 
@@ -148,10 +152,10 @@ saas-analytics-pipeline/
 ├── dbt_project/
 │   ├── models/
 │   │   ├── staging/            5 views
-│   │   ├── intermediate/       int_subscriptions_history
+│   │   ├── intermediate/       subscription history, month spine, customer-months
 │   │   ├── marts/              6 tables
 │   │   └── schema.yml          sources, tests and column descriptions
-│   ├── tests/assert_mrr_reconciles.sql
+│   ├── tests/                  2 custom dbt tests
 │   ├── dbt_project.yml
 │   └── profiles.yml            local DuckDB
 ├── orchestration/saas_pipeline.py
