@@ -1,27 +1,47 @@
 import json
 from collections import Counter, defaultdict
+from datetime import date, timedelta
 
 import pytest
 
 import generate_synthetic_data as gen
 
 
-def run(tmp_path, monkeypatch):
+@pytest.fixture(scope="module")
+def tables():
+    return gen.generate()
+
+
+@pytest.fixture(scope="module")
+def large():
+    # Big enough that the configured patterns show clearly instead of being lost in noise.
+    return gen.generate(n_customers=3000)
+
+
+def cancel_dates(tables):
+    customer_of = {s["subscription_id"]: s["customer_id"] for s in tables["subscriptions"]}
+    return {
+        customer_of[e["subscription_id"]]: date.fromisoformat(e["event_date"])
+        for e in tables["subscription_events"]
+        if e["event_type"] == "cancel"
+    }
+
+
+def test_same_seed_gives_identical_data(tables):
+    assert gen.generate() == tables
+
+
+def test_different_seed_gives_different_data(tables):
+    assert gen.generate(seed=7) != tables
+
+
+def test_main_writes_one_json_file_per_table(tables, tmp_path, monkeypatch):
     monkeypatch.setattr(gen, "OUTPUT_DIR", tmp_path)
     gen.main()
-    return {p.stem: json.loads(p.read_text()) for p in tmp_path.glob("*.json")}
+    assert {p.stem: json.loads(p.read_text()) for p in tmp_path.glob("*.json")} == tables
 
 
-@pytest.fixture
-def tables(tmp_path, monkeypatch):
-    return run(tmp_path, monkeypatch)
-
-
-def test_same_seed_gives_identical_data(tables, tmp_path_factory, monkeypatch):
-    assert run(tmp_path_factory.mktemp("second"), monkeypatch) == tables
-
-
-def test_row_counts_match_readme(tables):
+def test_default_run_matches_published_figures(tables):
     assert len(tables["customers"]) == 100
     assert len(tables["subscriptions"]) == 137
     assert len(tables["subscription_events"]) == 172
@@ -61,3 +81,40 @@ def test_plan_changes_move_in_the_right_direction(tables):
 def test_invoices_bill_the_plan_price(tables):
     plan_of = {s["subscription_id"]: s["plan_id"] for s in tables["subscriptions"]}
     assert all(i["amount"] == gen.PRICE[plan_of[i["subscription_id"]]] for i in tables["invoices"])
+
+
+def test_churn_is_much_higher_in_the_first_90_days(large):
+    cancelled = cancel_dates(large)
+    early_days = late_days = early_cancels = late_cancels = 0
+    for c in large["customers"]:
+        tenure = (cancelled.get(c["customer_id"], gen.END_DATE) - date.fromisoformat(c["signup_date"])).days
+        early_days += min(90, tenure)
+        late_days += max(0, tenure - 90)
+        if c["customer_id"] in cancelled:
+            early_cancels += tenure <= 90
+            late_cancels += tenure > 90
+    early_rate = early_cancels / early_days
+    late_rate = late_cancels / late_days
+    assert early_rate > 2 * late_rate
+
+
+def test_cheaper_starting_plans_churn_more(large):
+    starting_plan = {}
+    for s in sorted(large["subscriptions"], key=lambda s: s["valid_from"]):
+        starting_plan.setdefault(s["customer_id"], s["plan_id"])
+    customers = Counter(starting_plan.values())
+    churned = Counter(starting_plan[c] for c in cancel_dates(large))
+    starter, pro, enterprise = (churned[p] / customers[p] for p in (1, 2, 3))
+    assert starter > pro > enterprise
+
+
+def test_signups_spike_in_january_and_september(large):
+    candidate_days = [
+        gen.START_DATE + timedelta(days=i) for i in range((gen.END_DATE - gen.START_DATE).days - 30)
+    ]
+    days_in_month = Counter(d.month for d in candidate_days)
+    signups = Counter(date.fromisoformat(c["signup_date"]).month for c in large["customers"])
+    other = [m for m in range(1, 13) if m not in (1, 9)]
+    baseline = sum(signups[m] for m in other) / sum(days_in_month[m] for m in other)
+    assert signups[1] / days_in_month[1] > 2 * baseline
+    assert signups[9] / days_in_month[9] > 1.75 * baseline
