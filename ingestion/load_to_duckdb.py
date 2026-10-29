@@ -11,7 +11,7 @@ TABLES = ["customers", "plans", "subscriptions", "subscription_events", "invoice
 con = duckdb.connect(str(DB_PATH))
 for table in TABLES:
     path = SOURCE_DIR / f"{table}.json"
-    con.execute(f"create or replace table raw_{table} as select * from read_json_auto('{path}')")
+    con.execute(f"create or replace table raw_{table} as select * from read_json_auto(?)", [str(path)])
     rows = con.execute(f"select count(*) from raw_{table}").fetchone()[0]
     print(f"raw_{table}: {rows} rows")
 con.close()

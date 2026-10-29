@@ -18,7 +18,6 @@ EXPORTS = {
 
 con = duckdb.connect(str(ROOT / "dbt_project" / "dbt.duckdb"), read_only=True)
 for name, query in EXPORTS.items():
-    con.execute(f"copy ({query}) to '{OUT / (name + '.csv')}' (header, delimiter ',')")
-    rows = con.execute(f"select count(*) from ({query})").fetchone()[0]
+    rows = con.execute(f"copy ({query}) to ? (header, delimiter ',')", [str(OUT / f"{name}.csv")]).fetchone()[0]
     print(f"{name}.csv: {rows} rows")
 con.close()
