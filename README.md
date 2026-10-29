@@ -106,7 +106,7 @@ Key modeling logic:
 
 All 48 tests pass. Coverage includes uniqueness and not-null checks on every key, `relationships` checks between the staging layer, the intermediate model and the marts, `accepted_values` checks on status, event type and plan, and not-null checks on every mart.
 
-A custom test, `tests/assert_mrr_reconciles.sql`, fails if either of the following conditions is false for any month:
+A custom test, `dbt_project/tests/assert_mrr_reconciles.sql`, fails if either of the following conditions is false for any month:
 
 1. New, expansion, contraction and churned MRR sum to net new MRR.
 2. Ending MRR in `mart_mrr_movements` equals the total of `mart_mrr`.
