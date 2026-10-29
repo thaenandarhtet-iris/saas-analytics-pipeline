@@ -18,8 +18,6 @@ EXPORTS = {
 
 con = duckdb.connect(str(ROOT / "dbt_project" / "dbt.duckdb"), read_only=True)
 for name, query in EXPORTS.items():
-    # COPY TO does not accept a bound parameter for the path, so quotes are escaped instead.
-    target = str(OUT / f"{name}.csv").replace("'", "''")
-    rows = con.execute(f"copy ({query}) to '{target}' (header, delimiter ',')").fetchone()[0]
+    rows = con.execute(f"copy ({query}) to ? (header, delimiter ',')", [str(OUT / f"{name}.csv")]).fetchone()[0]
     print(f"{name}.csv: {rows} rows")
 con.close()
