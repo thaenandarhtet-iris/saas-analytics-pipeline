@@ -16,8 +16,8 @@ An end-to-end analytics engineering project that models subscription revenue for
 | | |
 |---|---|
 | Source data | 100 customers, 137 subscription versions, 172 events and 1,559 invoices (1,971 raw rows), September 2023 to September 2026 |
-| dbt project | dbt-core 1.11: 14 models (5 staging, 3 intermediate, 6 marts) and 57 data tests, all passing |
-| Generator tests | 11 pytest tests, including checks that the churn, plan-tier and seasonality patterns actually appear in the data |
+| dbt project | dbt-core 1.11: 14 models (5 staging, 3 intermediate, 6 marts) and 59 data tests, all passing |
+| Generator tests | 13 pytest tests, including checks on a separate 3,000-customer run that the configured churn, plan-tier and seasonality patterns are produced |
 | Execution | `python orchestration/saas_pipeline.py` runs generation, load, `dbt run`, `dbt test` and export |
 | Continuous integration | GitHub Actions runs the generator tests and the full pipeline on every pull request and every push to `main` |
 | Dashboard | Four views: MRR trend, MRR movement, monthly churn and cohort retention heatmap |
@@ -52,7 +52,7 @@ flowchart LR
     D --> E["dbt marts<br/>6 tables"]
     E --> F["export_csvs.py"]
     F --> G["Tableau Public<br/>4 views"]
-    T["57 dbt tests"] -.-> C
+    T["59 dbt tests"] -.-> C
     T -.-> D
     T -.-> E
     CI["GitHub Actions"] -.->|runs the pipeline on every PR| A
@@ -101,25 +101,26 @@ The 137 subscription rows consist of 100 initial versions and 37 plan changes. A
 
 Key modeling logic:
 
-- **All monthly metrics share one customer-by-month model.** `int_customer_months` crosses every customer with a month spine (September 2023 to September 2026) and records two facts per month: the plan and price of the version live on the last day of the month, and whether any version was live during the month. The rules for "billed" and "active" are defined once, and the three monthly marts are aggregations of this model.
+- **All monthly metrics share one customer-by-month model.** `int_customer_months` crosses every customer with a month spine (September 2023 to September 2026) and records two facts per month: the plan and price of the version live on the last day of the month, and whether any version was live on at least one day of the month. Versions are half-open intervals (`valid_from <= day < valid_to`), so a version ending on the 1st does not count toward that month. The rules for "billed" and "active" are defined once, and the three monthly marts are aggregations of this model.
 - **MRR is a month-end snapshot.** Each customer is valued at the price of the version that is live on the last day of the month.
 - **MRR movements compare each customer's MRR with the prior month.** A change from zero to a positive amount is new, an increase is expansion, a decrease with continued payment is contraction, and a change to zero is churn.
 - **Cohort retention treats a customer as active in a month if any of their versions was live at some point in that month.** The model builds the full cohort-by-age grid (35 monthly cohorts and 691 cohort-month cells) and fills gaps with 0, so a cohort that loses all of its customers reports 0% rather than a blank cell. The dashboard heatmap displays the first 12 months.
 
 ## Testing and data quality
 
-All 57 dbt data tests pass. Coverage includes uniqueness and not-null checks on every key, `relationships` checks between the staging layer, the intermediate models and the marts, `accepted_values` checks on status, event type and plan, and not-null checks on every mart.
+All 59 dbt data tests pass. Coverage includes uniqueness and not-null checks on every key, `relationships` checks between the staging layer, the intermediate models and the marts, `accepted_values` checks on status, event type and plan, and not-null checks on every mart.
 
-Two custom tests guard the core logic:
+Three custom tests guard the core logic:
 
 - `dbt_project/tests/assert_mrr_reconciles.sql` fails if, for any month, new, expansion, contraction and churned MRR do not sum to net new MRR, or if ending MRR in `mart_mrr_movements` does not equal the total of `mart_mrr`.
-- `dbt_project/tests/assert_customer_months_complete.sql` fails if `int_customer_months` has a duplicate or missing customer-month, or a customer billed at month end who is not marked active. It was confirmed to fail when the month-end rule is deliberately broken.
+- `dbt_project/tests/assert_customer_months_complete.sql` fails if `int_customer_months` has a duplicate or missing customer-month, more than one version live at month end, a customer billed at month end who is not marked active, or a customer marked active in a month that starts on or after their cancellation. The last check uses cancel events rather than the model's own date logic. Deliberately breaking either date boundary in the model makes this test fail.
+- `dbt_project/tests/assert_subscription_versions_do_not_overlap.sql` fails if two versions of one customer's subscription are live on the same day, the assumption every monthly metric depends on.
 
-The data generator has its own 11 pytest tests. Beyond reproducibility, row counts and SCD2 rules, three of them check on a 3,000-customer run that the configured patterns are present: churn more than twice as high in the first 90 days, higher churn on cheaper starting plans, and January and September signup spikes. Each was confirmed to fail when its pattern is switched off.
+The data generator has its own 13 pytest tests. They cover reproducibility, row counts, SCD2 rules, and a check that the dbt month window matches the generator's dates. Three of them run on a separate 3,000-customer dataset and check that the configured patterns are produced: churn more than twice as high in the first 90 days, higher churn on cheaper starting plans, and January and September signup spikes. Each was confirmed to fail when its pattern is switched off. These tests check the generator's behavior, not the 100-customer figures above.
 
 ## Engineering notes
 
-Twelve problems found while building the project, including a churn model that labelled every customer as churned and still passed its tests, and a dashboard that summed monthly MRR snapshots, are written up with root causes and fixes in [docs/ENGINEERING_NOTES.md](docs/ENGINEERING_NOTES.md).
+Thirteen problems found while building the project, including a churn model that labelled every customer as churned and still passed its tests, and a dashboard that summed monthly MRR snapshots, are written up with root causes and fixes in [docs/ENGINEERING_NOTES.md](docs/ENGINEERING_NOTES.md).
 
 ## Running the project
 
@@ -155,7 +156,7 @@ saas-analytics-pipeline/
 │   │   ├── intermediate/       subscription history, month spine, customer-months
 │   │   ├── marts/              6 tables
 │   │   └── schema.yml          sources, tests and column descriptions
-│   ├── tests/                  2 custom dbt tests
+│   ├── tests/                  3 custom dbt tests
 │   ├── dbt_project.yml
 │   └── profiles.yml            local DuckDB
 ├── orchestration/saas_pipeline.py
