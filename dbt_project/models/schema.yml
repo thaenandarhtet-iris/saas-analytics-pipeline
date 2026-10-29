@@ -135,8 +135,9 @@ models:
   - name: int_customer_months
     description: >
       One row per customer per month. plan_name and mrr come from the version live on the
-      last day of the month; is_active is true if any version was live during the month.
-      The base for mart_mrr, mart_mrr_movements and mart_cohort_retention.
+      last day of the month; is_active is true if some version was live on at least one
+      day of the month (valid_to is exclusive). The base for mart_mrr, mart_mrr_movements
+      and mart_cohort_retention.
     columns:
       - name: customer_id
         data_tests:
@@ -156,6 +157,9 @@ models:
         data_tests:
           - not_null
       - name: is_active
+        data_tests:
+          - not_null
+      - name: versions_live_at_month_end
         data_tests:
           - not_null
 
