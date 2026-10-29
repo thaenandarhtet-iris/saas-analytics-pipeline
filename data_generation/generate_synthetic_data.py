@@ -43,18 +43,18 @@ REGIONS = ["US", "EU", "APAC", "LATAM"]
 SIZE_BANDS = ["1-10", "11-50", "51-200", "200+"]
 
 
-def rand_day(start, end):
-    return start + timedelta(days=random.randrange(1, (end - start).days))
+def rand_day(rng, start, end):
+    return start + timedelta(days=rng.randrange(1, (end - start).days))
 
 
-def signup_dates(n):
+def signup_dates(rng, n):
     days = [START_DATE + timedelta(days=i) for i in range((END_DATE - START_DATE).days - 30)]
     weights = [SIGNUP_SEASONALITY.get(d.month, 1.0) for d in days]
-    return sorted(random.choices(days, weights=weights, k=n))
+    return sorted(rng.choices(days, weights=weights, k=n))
 
 
-def simulate_customer(signup_date):
-    plan_id = random.choices([1, 2, 3], weights=[0.5, 0.35, 0.15])[0]
+def simulate_customer(rng, signup_date):
+    plan_id = rng.choices([1, 2, 3], weights=[0.5, 0.35, 0.15])[0]
     periods = []
     period_start, opened_by = signup_date, "signup"
     month = 1
@@ -66,15 +66,15 @@ def simulate_customer(signup_date):
         churn_p = MONTHLY_CHURN[plan_id] * (EARLY_CHURN_MULTIPLIER if month <= 3 else 1)
         up_p = UPGRADE_PROB[plan_id] if month >= 2 else 0
         down_p = DOWNGRADE_PROB[plan_id] if month >= 2 else 0
-        roll = random.random()
+        roll = rng.random()
         if roll < churn_p:
-            periods.append((plan_id, period_start, rand_day(window_start, window_end), opened_by))
+            periods.append((plan_id, period_start, rand_day(rng, window_start, window_end), opened_by))
             return periods, True
         if roll < churn_p + up_p + down_p:
-            change_date = rand_day(window_start, window_end)
+            change_date = rand_day(rng, window_start, window_end)
             periods.append((plan_id, period_start, change_date, opened_by))
             if roll < churn_p + up_p:
-                plan_id = 3 if plan_id == 2 else random.choices([2, 3], weights=[0.8, 0.2])[0]
+                plan_id = 3 if plan_id == 2 else rng.choices([2, 3], weights=[0.8, 0.2])[0]
                 opened_by = "upgrade"
             else:
                 plan_id -= 1
@@ -85,11 +85,11 @@ def simulate_customer(signup_date):
     return periods, False
 
 
-def build_tables(customers):
+def build_tables(rng, customers):
     subscriptions, events, invoices = [], [], []
     sub_n = evt_n = inv_n = 0
     for c in customers:
-        periods, canceled = simulate_customer(date.fromisoformat(c["signup_date"]))
+        periods, canceled = simulate_customer(rng, date.fromisoformat(c["signup_date"]))
         prev_plan = None
         for i, (plan_id, start, end, opened_by) in enumerate(periods):
             is_last = i == len(periods) - 1
@@ -133,7 +133,7 @@ def build_tables(customers):
                     "invoice_date": bill.isoformat(),
                     "amount": PRICE[plan_id],
                     "currency": "USD",
-                    "status": random.choices(["paid", "failed", "refunded"], weights=[0.93, 0.05, 0.02])[0],
+                    "status": rng.choices(["paid", "failed", "refunded"], weights=[0.93, 0.05, 0.02])[0],
                 })
                 k += 1
                 bill = start + relativedelta(months=k)
@@ -141,35 +141,42 @@ def build_tables(customers):
     return subscriptions, events, invoices
 
 
-def main():
-    random.seed(SEED)
-    Faker.seed(SEED)
+def generate(seed=SEED, n_customers=N_CUSTOMERS):
+    """Return the five tables as lists of row dicts. The same arguments always give the same data."""
+    rng = random.Random(seed)
     fake = Faker()
+    fake.seed_instance(seed)
 
     customers = [
         {
             "customer_id": f"CUST_{i + 1:04d}",
             "company_name": fake.company(),
-            "industry": random.choice(INDUSTRIES),
-            "region": random.choice(REGIONS),
-            "employee_size_band": random.choice(SIZE_BANDS),
+            "industry": rng.choice(INDUSTRIES),
+            "region": rng.choice(REGIONS),
+            "employee_size_band": rng.choice(SIZE_BANDS),
             "signup_date": d.isoformat(),
         }
-        for i, d in enumerate(signup_dates(N_CUSTOMERS))
+        for i, d in enumerate(signup_dates(rng, n_customers))
     ]
-    subscriptions, events, invoices = build_tables(customers)
-
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    for name, rows in {
+    subscriptions, events, invoices = build_tables(rng, customers)
+    return {
         "customers": customers,
         "plans": PLANS,
         "subscriptions": subscriptions,
         "subscription_events": events,
         "invoices": invoices,
-    }.items():
+    }
+
+
+def main():
+    tables = generate()
+
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    for name, rows in tables.items():
         (OUTPUT_DIR / f"{name}.json").write_text(json.dumps(rows, indent=2))
 
-    counts = Counter(e["event_type"] for e in events)
+    customers, subscriptions, invoices = tables["customers"], tables["subscriptions"], tables["invoices"]
+    counts = Counter(e["event_type"] for e in tables["subscription_events"])
     signups = Counter(date.fromisoformat(c["signup_date"]).month for c in customers)
     print(f"customers: {len(customers)}, subscription versions: {len(subscriptions)}, invoices: {len(invoices)}")
     print(f"events: {dict(counts)}")
