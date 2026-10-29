@@ -1,10 +1,14 @@
 import json
 from collections import Counter, defaultdict
-from datetime import date, timedelta
+from datetime import date
+from pathlib import Path
 
 import pytest
+import yaml
 
 import generate_synthetic_data as gen
+
+ROOT = Path(__file__).resolve().parent.parent
 
 
 @pytest.fixture(scope="module")
@@ -33,6 +37,20 @@ def test_same_seed_gives_identical_data(tables):
 
 def test_different_seed_gives_different_data(tables):
     assert gen.generate(seed=7) != tables
+
+
+def test_changing_returned_tables_does_not_affect_later_runs():
+    first = gen.generate()
+    first["plans"][0]["monthly_price"] = 1
+    assert gen.generate()["plans"][0]["monthly_price"] == gen.PRICE[1]
+
+
+def test_dbt_month_window_matches_the_generator():
+    # The dbt month spine and the generator each define the window; drift would silently
+    # drop months from every monthly mart without failing any other test.
+    project = yaml.safe_load((ROOT / "dbt_project" / "dbt_project.yml").read_text())
+    assert project["vars"]["start_date"] == gen.START_DATE.isoformat()
+    assert project["vars"]["end_date"] == gen.END_DATE.isoformat()
 
 
 def test_main_writes_one_json_file_per_table(tables, tmp_path, monkeypatch):
@@ -109,10 +127,7 @@ def test_cheaper_starting_plans_churn_more(large):
 
 
 def test_signups_spike_in_january_and_september(large):
-    candidate_days = [
-        gen.START_DATE + timedelta(days=i) for i in range((gen.END_DATE - gen.START_DATE).days - 30)
-    ]
-    days_in_month = Counter(d.month for d in candidate_days)
+    days_in_month = Counter(d.month for d in gen.signup_candidate_days())
     signups = Counter(date.fromisoformat(c["signup_date"]).month for c in large["customers"])
     other = [m for m in range(1, 13) if m not in (1, 9)]
     baseline = sum(signups[m] for m in other) / sum(days_in_month[m] for m in other)

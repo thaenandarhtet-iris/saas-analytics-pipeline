@@ -47,8 +47,13 @@ def rand_day(rng, start, end):
     return start + timedelta(days=rng.randrange(1, (end - start).days))
 
 
+def signup_candidate_days():
+    """Every day a customer can sign up on: the window minus its last 30 days, so each has history."""
+    return [START_DATE + timedelta(days=i) for i in range((END_DATE - START_DATE).days - 30)]
+
+
 def signup_dates(rng, n):
-    days = [START_DATE + timedelta(days=i) for i in range((END_DATE - START_DATE).days - 30)]
+    days = signup_candidate_days()
     weights = [SIGNUP_SEASONALITY.get(d.month, 1.0) for d in days]
     return sorted(rng.choices(days, weights=weights, k=n))
 
@@ -161,7 +166,7 @@ def generate(seed=SEED, n_customers=N_CUSTOMERS):
     subscriptions, events, invoices = build_tables(rng, customers)
     return {
         "customers": customers,
-        "plans": PLANS,
+        "plans": [dict(p) for p in PLANS],
         "subscriptions": subscriptions,
         "subscription_events": events,
         "invoices": invoices,
