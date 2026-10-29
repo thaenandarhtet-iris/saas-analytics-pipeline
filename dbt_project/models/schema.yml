@@ -124,6 +124,41 @@ models:
                 to: ref('stg_plans')
                 field: plan_id
 
+  - name: int_month_spine
+    description: One row per calendar month in the window set by the start_date and end_date vars.
+    columns:
+      - name: month_start
+        data_tests:
+          - unique
+          - not_null
+
+  - name: int_customer_months
+    description: >
+      One row per customer per month. plan_name and mrr come from the version live on the
+      last day of the month; is_active is true if any version was live during the month.
+      The base for mart_mrr, mart_mrr_movements and mart_cohort_retention.
+    columns:
+      - name: customer_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_customers')
+                field: customer_id
+      - name: month_start
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('int_month_spine')
+                field: month_start
+      - name: mrr
+        data_tests:
+          - not_null
+      - name: is_active
+        data_tests:
+          - not_null
+
   - name: dim_customers
     description: Customer dimension with signup cohort month and churn status.
     columns:
